@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Transcription Audio Temps Réel</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+      min-height: 100vh;
+      color: #fff;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 2rem;
+    }
+    h1 { font-size: 2.5rem; margin-bottom: 0.5rem; background: linear-gradient(90deg, #00d4ff, #7b2cbf); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .subtitle { color: #888; margin-bottom: 2rem; }
+    .container {
+      background: rgba(255,255,255,0.05);
+      backdrop-filter: blur(10px);
+      border-radius: 20px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 800px;
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .upload-zone {
+      border: 3px dashed rgba(0,212,255,0.3);
+      border-radius: 15px;
+      padding: 3rem;
+      text-align: center;
+      cursor: pointer;
+      transition: all 0.3s;
+      margin-bottom: 2rem;
+    }
+    .upload-zone:hover { border-color: #00d4ff; background: rgba(0,212,255,0.05); }
+    .upload-zone.dragover { border-color: #7b2cbf; background: rgba(123,44,191,0.1); }
+    input[type="file"] { display: none; }
+    .btn {
+      background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+      border: none;
+      padding: 1rem 2rem;
+      color: white;
+      border-radius: 50px;
+      cursor: pointer;
+      font-size: 1rem;
+      font-weight: 600;
+      transition: transform 0.2s, box-shadow 0.2s;
+      margin: 0.5rem;
+    }
+    .btn:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,212,255,0.3); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    #audioPlayer { width: 100%; margin: 2rem 0; border-radius: 10px; }
+    .transcript-box {
+      background: rgba(0,0,0,0.3);
+      border-radius: 15px;
+      padding: 1.5rem;
+      min-height: 200px;
+      max-height: 400px;
+      overflow-y: auto;
+      font-size: 1.2rem;
+      line-height: 1.8;
+      position: relative;
+    }
+    .word {
+      display: inline-block;
+      padding: 0.2rem 0.4rem;
+      margin: 0.1rem;
+      border-radius: 5px;
+      transition: all 0.3s;
+      cursor: pointer;
+    }
+    .word:hover { background: rgba(0,212,255,0.2); }
+    .word.active {
+      background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+      color: white;
+      transform: scale(1.1);
+      font-weight: bold;
+    }
+    .word.interim { color: #888; font-style: italic; }
+    .controls { display: flex; justify-content: center; gap: 1rem; margin: 1rem 0; flex-wrap: wrap; }
+    .status {
+      text-align: center;
+      padding: 0.5rem;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+    }
+    .status.recording { background: rgba(255,0,0,0.2); color: #ff4444; animation: pulse 1s infinite; }
+    .status.processing { background: rgba(0,212,255,0.2); color: #00d4ff; }
+    .status.ready { background: rgba(0,255,0,0.2); color: #00ff88; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 2px;
+      margin: 1rem 0;
+      overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #00d4ff, #7b2cbf);
+      width: 0%;
+      transition: width 0.1s linear;
+    }
+    .mic-btn {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #ff006e, #8338ec);
+      border: none;
+      color: white;
+      font-size: 2rem;
+      cursor: pointer;
+      transition: all 0.3s;
+      box-shadow: 0 10px 30px rgba(255,0,110,0.3);
+    }
+    .mic-btn:hover { transform: scale(1.1); }
+    .mic-btn.recording { animation: recordPulse 1s infinite; background: linear-gradient(135deg, #ff0000, #ff006e); }
+    @keyframes recordPulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(255,0,0,0.7); } 50% { box-shadow: 0 0 0 20px rgba(255,0,0,0); } }
+  </style>
+</head>
+<body>
+  <h1>🎙️ Transcription Temps Réel</h1>
+  <p class="subtitle">Upload un audio ou utilise ton micro - Les mots s'affichent au rythme de la parole</p>
+  
+  <div class="container">
+    <div class="upload-zone" id="dropZone">
+      <p>📁 Glisse un fichier audio ici ou clique pour sélectionner</p>
+      <input type="file" id="fileInput" accept="audio/*">
+    </div>
+    
+    <div class="controls">
+      <button class="mic-btn" id="micBtn">🎤</button>
+    </div>
+    
+    <div class="status ready" id="status">Prêt</div>
+    
+    <audio id="audioPlayer" controls style="display:none;"></audio>
+    <div class="progress-bar" id="progressBar" style="display:none;">
+      <div class="progress-fill" id="progressFill"></div>
+    </div>
+    
+    <div class="transcript-box" id="transcriptBox">
+      <p style="color:#666; text-align:center; margin-top: 80px;">La transcription apparaîtra ici...</p>
+    </div>
+    
+    <div class="controls">
+      <button class="btn" id="downloadBtn" style="display:none;">⬇️ Télécharger TXT</button>
+      <button class="btn" id="clearBtn">🗑️ Effacer</button>
+    </div>
+  </div>
+
+  <script>
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const transcriptBox = document.getElementById('transcriptBox');
+    const status = document.getElementById('status');
+    const micBtn = document.getElementById('micBtn');
+    const progressBar = document.getElementById('progressBar');
+    const progressFill = document.getElementById('progressFill');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    
+    let ws = null;
+    let mediaRecorder = null;
+    let audioContext = null;
+    let words = [];
+    let isRecording = false;
+
+    // Upload fichier
+    dropZone.addEventListener('click', () => fileInput.click());
+    dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
+    });
+    fileInput.addEventListener('change', (e) => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+    async function handleFile(file) {
+      status.textContent = 'Transcription en cours...';
+      status.className = 'status processing';
+      
+      const url = URL.createObjectURL(file);
+      audioPlayer.src = url;
+      audioPlayer.style.display = 'block';
+      progressBar.style.display = 'block';
+      
+      const formData = new FormData();
+      formData.append('audio', file);
+      
+      try {
+        const res = await fetch('/transcribe', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        if (data.words) {
+          words = data.words;
+          displayTranscript(words);
+          syncWithAudio();
+          downloadBtn.style.display = 'inline-block';
+        }
+        status.textContent = 'Transcription terminée';
+        status.className = 'status ready';
+      } catch (err) {
+        status.textContent = 'Erreur: ' + err.message;
+        status.className = 'status';
+      }
+    }
+
+    function displayTranscript(wordList) {
+      transcriptBox.innerHTML = '';
+      wordList.forEach((word, i) => {
+        const span = document.createElement('span');
+        span.className = 'word';
+        span.textContent = word.word + ' ';
+        span.dataset.start = word.start;
+        span.dataset.end = word.end;
+        span.dataset.index = i;
+        transcriptBox.appendChild(span);
+      });
+    }
+
+    function syncWithAudio() {
+      audioPlayer.ontimeupdate = () => {
+        const current = audioPlayer.currentTime;
+        progressFill.style.width = (current / audioPlayer.duration * 100) + '%';
+        
+        document.querySelectorAll('.word').forEach(word => {
+          const start = parseFloat(word.dataset.start);
+          const end = parseFloat(word.dataset.end);
+          if (current >= start && current <= end) {
+            word.classList.add('active');
+            word.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          } else {
+            word.classList.remove('active');
+          }
+        });
+      };
+    }
+
+    // Microphone temps réel
+    micBtn.addEventListener('click', toggleRecording);
+
+    async function toggleRecording() {
+      if (isRecording) {
+        stopRecording();
+      } else {
+        startRecording();
+      }
+    }
+
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioContext = new AudioContext({ sampleRate: 16000 });
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        ws = new WebSocket(`wss://${window.location.host}`);
+        
+        ws.onopen = () => {
+          ws.send('START');
+          status.textContent = '🔴 Enregistrement... Parle maintenant';
+          status.className = 'status recording';
+          micBtn.classList.add('recording');
+          isRecording = true;
+          transcriptBox.innerHTML = '';
+        };
+        
+        ws.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.text) {
+            updateLiveTranscript(data.text, data.isFinal);
+          }
+        };
+        
+        processor.onaudioprocess = (e) => {
+          if (!isRecording) return;
+          const inputData = e.inputBuffer.getChannelData(0);
+          const pcmData = convertFloat32ToInt16(inputData);
+          if (ws.readyState === WebSocket.OPEN) {
+            ws.send(pcmData.buffer);
+          }
+        };
+        
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        
+        mediaRecorder = { stream, processor, source };
+        
+      } catch (err) {
+        status.textContent = 'Erreur micro: ' + err.message;
+      }
+    }
+
+    function convertFloat32ToInt16(float32Array) {
+      const int16Array = new Int16Array(float32Array.length);
+      for (let i = 0; i < float32Array.length; i++) {
+        int16Array[i] = Math.max(-32768, Math.min(32767, float32Array[i] * 32768));
+      }
+      return int16Array;
+    }
+
+    function updateLiveTranscript(text, isFinal) {
+      let existing = transcriptBox.querySelector('.interim');
+      if (!existing) {
+        existing = document.createElement('span');
+        existing.className = 'word interim';
+        transcriptBox.appendChild(existing);
+      }
+      existing.textContent = text + ' ';
+      
+      if (isFinal) {
+        existing.className = 'word';
+        existing.classList.remove('interim');
+        downloadBtn.style.display = 'inline-block';
+      }
+      transcriptBox.scrollTop = transcriptBox.scrollHeight;
+    }
+
+    function stopRecording() {
+      isRecording = false;
+      if (ws) {
+        ws.send('STOP');
+        ws.close();
+      }
+      if (mediaRecorder) {
+        mediaRecorder.processor.disconnect();
+        mediaRecorder.source.disconnect();
+        mediaRecorder.stream.getTracks().forEach(t => t.stop());
+      }
+      if (audioContext) audioContext.close();
+      
+      micBtn.classList.remove('recording');
+      status.textContent = 'Prêt';
+      status.className = 'status ready';
+    }
+
+    // Télécharger transcription
+    downloadBtn.addEventListener('click', () => {
+      const text = Array.from(document.querySelectorAll('.word')).map(w => w.textContent).join('');
+      const blob = new Blob([text], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'transcription.txt';
+      a.click();
+    });
+
+    clearBtn.addEventListener('click', () => {
+      transcriptBox.innerHTML = '<p style="color:#666; text-align:center; margin-top: 80px;">La transcription apparaîtra ici...</p>';
+      audioPlayer.style.display = 'none';
+      progressBar.style.display = 'none';
+      downloadBtn.style.display = 'none';
+      words = [];
+      if (isRecording) stopRecording();
+    });
+  </script>
+</body>
+</html>
