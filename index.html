@@ -92,6 +92,7 @@
     .status.recording { background: rgba(255,0,0,0.2); color: #ff4444; animation: pulse 1s infinite; }
     .status.processing { background: rgba(0,212,255,0.2); color: #00d4ff; }
     .status.ready { background: rgba(0,255,0,0.2); color: #00ff88; }
+    .status.error { background: rgba(255,0,0,0.3); color: #ff6666; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     .progress-bar {
       width: 100%;
@@ -173,6 +174,11 @@
     let words = [];
     let isRecording = false;
 
+    // Détection du protocole (HTTP vs HTTPS)
+    const isSecure = window.location.protocol === 'https:';
+    const wsProtocol = isSecure ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.host}`;
+
     // Upload fichier
     dropZone.addEventListener('click', () => fileInput.click());
     dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
@@ -197,20 +203,41 @@
       formData.append('audio', file);
       
       try {
-        const res = await fetch('/transcribe', { method: 'POST', body: formData });
+        const res = await fetch('/transcribe', { 
+          method: 'POST', 
+          body: formData 
+        });
+        
+        if (!res.ok) {
+          throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+        }
+        
         const data = await res.json();
         
-        if (data.words) {
+        if (data.error) {
+          throw new Error(data.error);
+        }
+        
+        if (data.words && data.words.length > 0) {
           words = data.words;
           displayTranscript(words);
           syncWithAudio();
           downloadBtn.style.display = 'inline-block';
+          status.textContent = 'Transcription terminée';
+          status.className = 'status ready';
+        } else if (data.transcript) {
+          // Fallback si pas de mots avec timestamps
+          transcriptBox.innerHTML = `<p>${data.transcript}</p>`;
+          downloadBtn.style.display = 'inline-block';
+          status.textContent = 'Transcription terminée (sans synchronisation)';
+          status.className = 'status ready';
+        } else {
+          throw new Error('Aucune transcription reçue');
         }
-        status.textContent = 'Transcription terminée';
-        status.className = 'status ready';
       } catch (err) {
+        console.error('Upload error:', err);
         status.textContent = 'Erreur: ' + err.message;
-        status.className = 'status';
+        status.className = 'status error';
       }
     }
 
@@ -263,9 +290,11 @@
         const source = audioContext.createMediaStreamSource(stream);
         const processor = audioContext.createScriptProcessor(4096, 1, 1);
         
-        ws = new WebSocket(`wss://${window.location.host}`);
+        console.log('Connecting WebSocket to:', wsUrl);
+        ws = new WebSocket(wsUrl);
         
         ws.onopen = () => {
+          console.log('WebSocket connected');
           ws.send('START');
           status.textContent = '🔴 Enregistrement... Parle maintenant';
           status.className = 'status recording';
@@ -275,9 +304,33 @@
         };
         
         ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          if (data.text) {
-            updateLiveTranscript(data.text, data.isFinal);
+          try {
+            const data = JSON.parse(event.data);
+            if (data.error) {
+              console.error('Server error:', data.error);
+              status.textContent = 'Erreur serveur: ' + data.error;
+              status.className = 'status error';
+              return;
+            }
+            if (data.text) {
+              updateLiveTranscript(data.text, data.isFinal);
+            }
+          } catch (err) {
+            console.error('Message parse error:', err);
+          }
+        };
+        
+        ws.onerror = (err) => {
+          console.error('WebSocket error:', err);
+          status.textContent = 'Erreur connexion temps réel';
+          status.className = 'status error';
+          stopRecording();
+        };
+        
+        ws.onclose = () => {
+          console.log('WebSocket closed');
+          if (isRecording) {
+            stopRecording();
           }
         };
         
@@ -296,7 +349,9 @@
         mediaRecorder = { stream, processor, source };
         
       } catch (err) {
+        console.error('Microphone error:', err);
         status.textContent = 'Erreur micro: ' + err.message;
+        status.className = 'status error';
       }
     }
 
@@ -327,7 +382,7 @@
 
     function stopRecording() {
       isRecording = false;
-      if (ws) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send('STOP');
         ws.close();
       }
@@ -352,6 +407,7 @@
       a.href = url;
       a.download = 'transcription.txt';
       a.click();
+      URL.revokeObjectURL(url);
     });
 
     clearBtn.addEventListener('click', () => {
@@ -361,6 +417,8 @@
       downloadBtn.style.display = 'none';
       words = [];
       if (isRecording) stopRecording();
+      audioPlayer.pause();
+      audioPlayer.currentTime = 0;
     });
   </script>
 </body>
